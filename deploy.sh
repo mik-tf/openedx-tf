@@ -249,15 +249,6 @@ mkdir -p /root/iptables-backup
 iptables-save > /root/iptables-backup/rules-$(date +%Y%m%d-%H%M%S).v4
 ip6tables-save > /root/iptables-backup/rules-$(date +%Y%m%d-%H%M%S).v6
 
-# Dynamically detect Docker subnet
-echo "Detecting Docker network configuration..."
-DOCKER_SUBNET=$(docker network inspect bridge | grep -oP '(?<="Subnet": ")[^"]*')
-if [ -z "$DOCKER_SUBNET" ]; then
-    echo "Warning: Could not automatically detect Docker subnet. Using default 172.17.0.0/16"
-    DOCKER_SUBNET="172.17.0.0/16"
-fi
-echo "Using Docker subnet: $DOCKER_SUBNET"
-
 # Flush existing rules and set default policies
 echo "Flushing existing iptables rules..."
 iptables -F
@@ -266,6 +257,14 @@ iptables -t nat -F
 iptables -t nat -X
 iptables -t mangle -F
 iptables -t mangle -X
+
+# Create Docker-specific chains that Docker expects
+echo "Creating Docker-specific chains..."
+iptables -N DOCKER 2>/dev/null || true
+iptables -t nat -N DOCKER 2>/dev/null || true
+iptables -t nat -N DOCKER-USER 2>/dev/null || true
+iptables -t nat -N DOCKER-ISOLATION-STAGE-1 2>/dev/null || true
+iptables -t nat -N DOCKER-ISOLATION-STAGE-2 2>/dev/null || true
 
 # Set default policies (no incoming, allow outgoing)
 iptables -P INPUT DROP
@@ -287,17 +286,33 @@ iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 iptables -A INPUT -p tcp --dport 443 -j ACCEPT
 iptables -A INPUT -p udp --dport 443 -j ACCEPT
 
+# Dynamically detect Docker subnet
+echo "Detecting Docker network configuration..."
+DOCKER_SUBNET=$(docker network inspect bridge | grep -oP '(?<="Subnet": ")[^"]*')
+if [ -z "$DOCKER_SUBNET" ]; then
+  echo "Warning: Could not automatically detect Docker subnet. Using default 172.17.0.0/16"
+  DOCKER_SUBNET="172.17.0.0/16"
+fi
+echo "Using Docker subnet: $DOCKER_SUBNET"
+
 # Docker-specific rules using detected subnet
 iptables -A INPUT -s $DOCKER_SUBNET -j ACCEPT
 iptables -A FORWARD -s $DOCKER_SUBNET -j ACCEPT
 iptables -A FORWARD -d $DOCKER_SUBNET -j ACCEPT
 
-# Specific rule for Docker's bridge interface
+# Allow Docker internal communication
 iptables -A FORWARD -i docker0 -o docker0 -j ACCEPT
 
-# Allow Docker to set up port forwarding rules for container published ports
+# Set up Docker's forwarding rules - these are critical
 iptables -A FORWARD -i docker0 ! -o docker0 -j ACCEPT
 iptables -A FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+# Setup proper DOCKER-USER chain handling
+iptables -t nat -A PREROUTING -m addrtype --dst-type LOCAL -j DOCKER
+iptables -t nat -A DOCKER-ISOLATION-STAGE-1 -i docker0 ! -o docker0 -j DOCKER-ISOLATION-STAGE-2
+iptables -t nat -A DOCKER-ISOLATION-STAGE-2 -o docker0 -j DROP
+iptables -t nat -A POSTROUTING -s $DOCKER_SUBNET ! -o docker0 -j MASQUERADE
+iptables -t nat -A DOCKER-USER -j RETURN
 
 # Save iptables rules for persistence
 echo "Saving iptables rules for persistence..."
@@ -322,36 +337,29 @@ echo "User has been configured with passwordless sudo access"
 echo ""
 echo "To start using Tutor and set up Open edX, follow these steps:"
 echo ""
-echo "1. Switch to the tutor user:"
+echo "1. Switch to the tutor user, activate the virtual environment:"
+echo "   and launch the platform"
 echo "   su - tutor"
-echo ""
-echo "2. Activate the virtual environment:"
 echo "   source ~/tutor-env/bin/activate"
-
-echo " 3. Update tutor"
+echo "   tutor local launch"
+echo ""
+echo "2. Update tutor and set a theme"
 echo "   tutor plugins update"
 echo "   tutor plugins install indigo"
 echo ""
-
-echo "4. Launch the platform"
-echo "   tutor local launch"
-echo ""
-echo "5. Start the Open edX platform installation:"
-echo "   tutor local quickstart --no-pullbase"
-echo ""
-echo "5. After installation, you can manage your Open edX platform with:"
+echo "3. After installation, you can manage your Open edX platform with:"
 echo "   tutor local start    # Start all services"
 echo "   tutor local stop     # Stop all services"
 echo "   tutor local status   # Check status of services"
 echo ""
-echo "6. To access your Open edX installation:"
+echo "4. To access your Open edX installation:"
 echo "   Check the LMS host with: tutor config printvalue LMS_HOST"
 echo "   Add this name to your DNS A record pointing to this server's IP address."
 echo ""
-echo "7. Docker data is configured to use persistent storage on /dev/vda"
+echo "5. Docker data is configured to use persistent storage on /dev/vda"
 echo "   This ensures your container data will survive reboots"
 echo ""
-echo "8. iptables firewall has been configured to allow SSH, HTTP, HTTPS traffic"
+echo "6. iptables firewall has been configured to allow SSH, HTTP, HTTPS traffic"
 echo "   and properly handle Docker container networking."
 echo "   Docker subnet ($DOCKER_SUBNET) has been automatically detected and configured."
 
