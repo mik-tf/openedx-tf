@@ -9,6 +9,9 @@
 - [Quick Start](#quick-start)
 - [Post-Installation](#post-installation)
   - [DNS Configuration](#dns-configuration)
+- [Backup and Recovery](#backup-and-recovery)
+  - [Setting Up Backups](#setting-up-backups)
+  - [Disaster Recovery](#disaster-recovery)
 - [Customization](#customization)
 - [Troubleshooting](#troubleshooting)
 - [Security Notes](#security-notes)
@@ -29,6 +32,8 @@ This repository contains an automated deployment script for setting up an Opened
 - **Persistent Storage**: Configures Docker to use dedicated storage on `/dev/vda` to ensure data survives reboots
 - **OpenedX with Tutor**: Installs Tutor, the official and recommended way to deploy OpenedX
 - **Indigo Theme**: Includes the Indigo theme for a modern learning experience
+- **Comprehensive Backup System**: Three-tier backup strategy with offsite storage
+- **Disaster Recovery**: Complete recovery process documented
 - **Production-Ready**: Includes all necessary configurations for a production environment
 
 ## Prerequisites
@@ -37,6 +42,7 @@ This repository contains an automated deployment script for setting up an Opened
 - At least 8GB RAM (16GB recommended for production)
 - At least 50GB storage
 - SSH access to the node with root privileges
+- For backups: A second VM to serve as backup storage
 
 ## ThreeFold Grid Deployment
 
@@ -95,12 +101,60 @@ For example, if your domain is `domain.com` and you want the school to be hosted
 
 This configuration ensures that both the main LMS platform and subdomains for Studio (cms.learn.yourdomain.com) and other services work correctly. After configuring DNS, the platform will be accessible at `https://learn.yourdomain.com` and Studio at `https://cms.learn.yourdomain.com`.
 
+## Backup and Recovery
+
+This repository includes a comprehensive backup and disaster recovery system for your OpenedX installation.
+
+### Setting Up Backups
+
+The backup system follows a three-tier approach:
+
+1. **Production VM**: Daily backups stored locally
+2. **Backup VM**: Offsite backup storage with longer retention
+3. **Local Computer**: Manual download option for critical backups
+
+To set up the backup system:
+
+1. Deploy a second VM to serve as your backup server:
+   ```bash
+   scp docs-backup/backup-vm-setup.sh root@<backup-vm-ip>:~/
+   ssh root@<backup-vm-ip> "chmod +x ~/backup-vm-setup.sh && ./backup-vm-setup.sh"
+   ```
+
+2. Configure backup on your production VM:
+   ```bash
+   sudo ./docs-backup/production-vm-backup-setup.sh
+   ```
+
+3. Follow the displayed instructions to complete the setup:
+   - Copy the SSH key to your backup VM
+   - Update the backup script with your backup VM's IP
+   - Test the backup system
+
+For detailed instructions, refer to the [backup documentation](docs-backup/README.md).
+
+### Disaster Recovery
+
+If you need to recover your OpenedX installation:
+
+1. Deploy a new VM using the main deployment script
+2. Obtain the latest backup (from backup VM or local copy)
+3. Follow the step-by-step instructions in the [recovery guide](docs-backup/recovery-guide.md)
+
+The recovery process is designed to minimize downtime and ensure complete restoration of your OpenedX environment.
+
 ## Customization
 
 You can customize the deployment by editing the script variables at the top:
 
 - `NEW_USER`: The name of the admin user (default: `tutor`)
 - `USER_PASSWORD`: The password for the admin user (default: `tutorpassword`)
+
+For OpenedX customization options:
+
+- Theme customization: `tutor config printvalue THEME_NAME`
+- Platform name: `tutor config printvalue PLATFORM_NAME`
+- Additional plugins: `tutor plugins list`
 
 ## Troubleshooting
 
@@ -112,11 +166,19 @@ If you encounter issues during deployment:
 - Check Docker data directory location: `docker info | grep "Docker Root Dir"`
 - Verify IPv4 connectivity: `curl -4 ifconfig.co`
 
+For backup-related issues:
+
+- Check backup logs: `cat /home/tutor/backup.log`
+- Verify SSH connectivity: `sudo -u tutor ssh -i /home/tutor/.ssh/backup_id_rsa backup@<backup-vm-ip>`
+- Check disk space: `df -h`
+
 ## Security Notes
 
 - The script disables SSH password authentication by default, requiring key-based login
 - The created admin user has passwordless sudo access for ease of administration
 - A basic iptables firewall is configured to allow only necessary traffic
+- Backup transfers use SSH encryption for security
+- The backup system uses dedicated SSH keys with restricted permissions
 
 ## License
 

@@ -1,0 +1,1079 @@
+DirectoryTree:
+.
+├── all_files_text.txt
+├── deploy.sh
+├── docs-backup
+│   ├── backup-vm-setup.sh
+│   ├── local-backup-puller.sh
+│   ├── production-vm-backup-setup.sh
+│   ├── README.md
+│   └── recovery-guide.md
+├── .gitignore
+├── LICENSE
+└── README.md
+EndDirectoryTree
+
+Filepath: ./docs-backup/local-backup-puller.sh
+Content:
+#!/bin/bash
+# Local backup downloader for OpenedX
+set -e
+
+# Check if IP address was provided
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 <backup-vm-ip>"
+    echo "Example: $0 123.45.67.89"
+    exit 1
+fi
+
+# Configuration
+BACKUP_VM_IP="$1"
+BACKUP_VM_USER="backup"
+LOCAL_DIR="$HOME/openedx_backups"
+REMOTE_DIR="/backup/openedx"
+
+# Create local directories
+mkdir -p $LOCAL_DIR/{daily,weekly,monthly}
+
+echo "Downloading OpenedX backups from backup server at $BACKUP_VM_IP..."
+
+# Download the latest backup from each category
+for category in daily weekly monthly; do
+  echo "Downloading latest $category backup..."
+  
+  # Get latest file name
+  latest=$(ssh $BACKUP_VM_USER@$BACKUP_VM_IP "ls -t $REMOTE_DIR/$category | head -1")
+  
+  if [ -n "$latest" ]; then
+    # Download the file
+    scp $BACKUP_VM_USER@$BACKUP_VM_IP:$REMOTE_DIR/$category/$latest $LOCAL_DIR/$category/
+    echo "✅ Downloaded $category backup: $latest"
+  else
+    echo "No $category backups found"
+  fi
+done
+
+echo "Backup download complete. Files saved to $LOCAL_DIR"
+
+
+Filepath: ./docs-backup/production-vm-backup-setup.sh
+Content:
+#!/bin/bash
+set -e
+
+# Production VM backup setup script for OpenedX
+echo "======== Setting up OpenedX Backup System ========"
+
+# Check if tutor user exists
+if ! id -u tutor &>/dev/null; then
+    echo "Error: tutor user not found. Please run the main deployment script first."
+    exit 1
+fi
+
+# Create backup script
+cat > /home/tutor/openedx-backup.sh << 'EEOF'
+#!/bin/bash
+set -e
+
+# Configuration - UPDATE THESE VALUES
+BACKUP_VM_IP="your-backup-vm-ip-here"  # CHANGE THIS!
+BACKUP_VM_USER="backup"
+BACKUP_SSH_KEY="/home/tutor/.ssh/backup_id_rsa"
+LOCAL_BACKUP_DIR="/home/tutor/openedx_backups"
+REMOTE_BACKUP_DIR="/backup/openedx"
+LOG_FILE="/home/tutor/backup.log"
+
+# Create directories if they don't exist
+mkdir -p $LOCAL_BACKUP_DIR/{daily,weekly,monthly}
+
+# Log function
+log() {
+    echo "[$(date +%Y-%m-%d\ %H:%M:%S)] $1" | tee -a $LOG_FILE
+}
+
+log "Starting backup process"
+
+# Set timestamp and determine backup type
+TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+DAY_OF_WEEK=$(date +%u)
+DAY_OF_MONTH=$(date +%d)
+BACKUP_FILE="openedx_backup_$TIMESTAMP.tar.gz"
+
+# Run tutor backup
+export PATH="/home/tutor/tutor-env/bin:$PATH"
+log "Creating backup with tutor"
+tutor config save
+tutor local backup > $LOCAL_BACKUP_DIR/daily/$BACKUP_FILE
+
+# Create weekly backup (on Sunday)
+if [ "$DAY_OF_WEEK" -eq 7 ]; then
+    log "Creating weekly backup"
+    cp $LOCAL_BACKUP_DIR/daily/$BACKUP_FILE $LOCAL_BACKUP_DIR/weekly/
+fi
+
+# Create monthly backup (on 1st day of month)
+if [ "$DAY_OF_MONTH" -eq "01" ]; then
+    log "Creating monthly backup"
+    cp $LOCAL_BACKUP_DIR/daily/$BACKUP_FILE $LOCAL_BACKUP_DIR/monthly/
+fi
+
+# Transfer to backup VM
+log "Transferring backup to $BACKUP_VM_IP"
+ssh -i $BACKUP_SSH_KEY -o StrictHostKeyChecking=no $BACKUP_VM_USER@$BACKUP_VM_IP "mkdir -p $REMOTE_BACKUP_DIR/{daily,weekly,monthly}" || {
+    log "ERROR: Could not connect to backup VM. Check IP and SSH key."
+    exit 1
+}
+
+# Transfer daily backup
+scp -i $BACKUP_SSH_KEY $LOCAL_BACKUP_DIR/daily/$BACKUP_FILE $BACKUP_VM_USER@$BACKUP_VM_IP:$REMOTE_BACKUP_DIR/daily/
+
+# Transfer weekly/monthly if applicable
+if [ "$DAY_OF_WEEK" -eq 7 ]; then
+    scp -i $BACKUP_SSH_KEY $LOCAL_BACKUP_DIR/daily/$BACKUP_FILE $BACKUP_VM_USER@$BACKUP_VM_IP:$REMOTE_BACKUP_DIR/weekly/
+fi
+
+if [ "$DAY_OF_MONTH" -eq "01" ]; then
+    scp -i $BACKUP_SSH_KEY $LOCAL_BACKUP_DIR/daily/$BACKUP_FILE $BACKUP_VM_USER@$BACKUP_VM_IP:$REMOTE_BACKUP_DIR/monthly/
+fi
+
+# Apply retention policies
+log "Applying retention policies"
+# Keep 7 daily backups locally
+find $LOCAL_BACKUP_DIR/daily -type f -mtime +7 -delete
+# Keep 4 weekly backups locally
+find $LOCAL_BACKUP_DIR/weekly -type f -mtime +28 -delete
+# Keep 3 monthly backups locally
+find $LOCAL_BACKUP_DIR/monthly -type f -mtime +90 -delete
+
+# Apply remote retention policies
+ssh -i $BACKUP_SSH_KEY $BACKUP_VM_USER@$BACKUP_VM_IP "
+find $REMOTE_BACKUP_DIR/daily -type f -mtime +30 -delete;
+find $REMOTE_BACKUP_DIR/weekly -type f -mtime +90 -delete;
+find $REMOTE_BACKUP_DIR/monthly -type f -mtime +365 -delete;
+"
+
+log "Backup completed successfully"
+EEOF
+
+# Make script executable
+chmod +x /home/tutor/openedx-backup.sh
+chown tutor:tutor /home/tutor/openedx-backup.sh
+
+# Generate SSH key for backup user
+sudo -u tutor ssh-keygen -t rsa -b 4096 -f /home/tutor/.ssh/backup_id_rsa -N ""
+
+# Create cron job for daily backups at 3 AM
+(crontab -u tutor -l 2>/dev/null || echo "") | { cat; echo "0 3 * * * /home/tutor/openedx-backup.sh"; } | crontab -u tutor -
+
+echo "========================================================"
+echo "Backup system setup complete!"
+echo ""
+echo "IMPORTANT: You need to manually copy this SSH public key to your backup VM:"
+echo ""
+cat /home/tutor/.ssh/backup_id_rsa.pub
+echo ""
+echo "Add this key to: /home/backup/.ssh/authorized_keys on your backup VM"
+echo ""
+echo "Then edit /home/tutor/openedx-backup.sh to update BACKUP_VM_IP with your actual backup VM IP"
+echo ""
+echo "You can test the backup by running: sudo -u tutor /home/tutor/openedx-backup.sh"
+echo "========================================================"
+
+
+Filepath: ./docs-backup/recovery-guide.md
+Content:
+# OpenedX Disaster Recovery Guide
+
+This guide explains how to recover your OpenedX installation in case of VM failure.
+
+## Prerequisites
+
+- Access to your backup files (from backup VM or local backups)
+- A new VM with similar specs to your original production VM
+- Your domain name and DNS access
+
+## Recovery Steps
+
+### 1. Prepare the New VM
+
+```bash
+# Deploy a fresh server using the main deployment script
+scp deploy.sh root@new-vm-ip:~/
+ssh root@new-vm-ip "chmod +x ~/deploy.sh && ./deploy.sh"
+```
+
+### 2. Transfer the Latest Backup
+
+You can get this from your backup VM or your local backup:
+
+```bash
+# Option 1: From backup VM
+scp backup@backup-vm-ip:/backup/openedx/daily/latest-backup.tar.gz /tmp/
+
+# Option 2: From local backup
+scp ~/openedx_backups/daily/latest-backup.tar.gz root@new-vm-ip:/tmp/
+```
+
+### 3. Restore the OpenedX Instance
+
+Log into the new VM and restore the backup:
+
+```bash
+# Log in as tutor
+su - tutor
+
+# Activate tutor environment
+export PATH="$HOME/tutor-env/bin:$PATH"
+
+# Stop any running services
+tutor local stop
+
+# Restore from backup
+tutor local restore /tmp/latest-backup.tar.gz
+
+# Start services
+tutor local start
+```
+
+### 4. Update DNS Records
+
+Update your DNS A records to point to the IP address of the new VM.
+
+### 5. Test the Restored Instance
+
+Verify that:
+- The LMS is accessible at your domain
+- User accounts and course content are restored
+- The Studio interface works correctly
+
+### 6. Restore Backup System
+
+Set up the backup system on the new VM:
+
+```bash
+sudo ./docs-backup/production-vm-backup-setup.sh
+```
+
+Follow the instructions to reconfigure the backup system with your backup VM.
+
+## Troubleshooting
+
+### MySQL Database Issues
+
+If you encounter database errors:
+
+```bash
+# Check MySQL logs
+tutor local logs mysql
+
+# Attempt a database reset if necessary
+tutor local init --no-pull
+```
+
+### Missing Course Content
+
+If course content is missing:
+
+```bash
+# Verify the backup contains course exports
+tar -tvf /tmp/latest-backup.tar.gz | grep course
+
+# Import demo course to test functionality
+tutor local importdemocourse
+```
+
+### Platform Not Starting
+
+If services fail to start:
+
+```bash
+# Check container status
+tutor local status
+
+# View logs for problematic services
+tutor local logs <service-name>
+
+# Rebuild problematic services
+tutor local restart <service-name>
+```
+
+
+Filepath: ./docs-backup/backup-vm-setup.sh
+Content:
+#!/bin/bash
+set -e
+
+# Backup VM setup script for OpenedX
+echo "======== Setting up OpenedX Backup Server ========"
+
+# Check if running as root
+if [ "$(id -u)" -ne 0 ]; then
+    echo "This script must be run as root"
+    exit 1
+fi
+
+# Install prerequisites
+export DEBIAN_FRONTEND=noninteractive
+apt update && apt install -y openssh-server rsync sudo
+
+# Create backup user
+BACKUP_USER="backup"
+useradd -m -s /bin/bash "$BACKUP_USER" 2>/dev/null || echo "User already exists"
+
+# Create backup directories
+BACKUP_DIR="/backup/openedx"
+mkdir -p $BACKUP_DIR/{daily,weekly,monthly}
+chown -R $BACKUP_USER:$BACKUP_USER $BACKUP_DIR
+
+# Set up SSH directory
+mkdir -p /home/$BACKUP_USER/.ssh
+touch /home/$BACKUP_USER/.ssh/authorized_keys
+chmod 700 /home/$BACKUP_USER/.ssh
+chmod 600 /home/$BACKUP_USER/.ssh/authorized_keys
+chown -R $BACKUP_USER:$BACKUP_USER /home/$BACKUP_USER/.ssh
+
+# Create monitoring script
+cat > /home/$BACKUP_USER/monitor-space.sh << 'EEOF'
+#!/bin/bash
+BACKUP_DIR="/backup/openedx"
+THRESHOLD=85
+USAGE=$(df -h $BACKUP_DIR | grep -v Filesystem | awk '{print $5}' | sed 's/%//')
+if [ $USAGE -gt $THRESHOLD ]; then
+  echo "Warning: Backup storage at $USAGE% capacity" | mail -s "OpenedX Backup Space Alert" root
+fi
+EEOF
+
+chmod +x /home/$BACKUP_USER/monitor-space.sh
+chown $BACKUP_USER:$BACKUP_USER /home/$BACKUP_USER/monitor-space.sh
+
+# Set up cron job
+(crontab -u $BACKUP_USER -l 2>/dev/null || echo "") | { cat; echo "0 7 * * * /home/$BACKUP_USER/monitor-space.sh"; } | crontab -u $BACKUP_USER -
+
+echo "========================================================"
+echo "Backup server is set up!"
+echo ""
+echo "NEXT STEP: Add the SSH key from your production server to:"
+echo "/home/$BACKUP_USER/.ssh/authorized_keys"
+echo ""
+echo "You'll generate this key on your production server in the next step."
+echo "========================================================"
+
+
+Filepath: ./docs-backup/README.md
+Content:
+# OpenedX Three-Tier Backup System
+
+This directory contains all the scripts and documentation needed to set up a comprehensive backup system for your OpenedX installation.
+
+## Overview
+
+The backup system consists of three tiers:
+
+1. **Production VM**: Daily backups stored locally (7 days retention)
+2. **Backup VM**: Offsite backup storage (30 days retention)
+3. **Local Computer**: Manual download of critical backups
+
+## Quick Start
+
+1. First, deploy your OpenedX instance using the main deployment script and ensure it's working properly with `tutor local launch`
+
+2. Set up a second VM to serve as your backup server:
+   ```
+   scp docs-backup/backup-vm-setup.sh root@your-backup-vm:~/
+   ssh root@your-backup-vm "chmod +x ~/backup-vm-setup.sh && ./backup-vm-setup.sh"
+   ```
+
+3. Set up the backup system on your production VM:
+   ```
+   sudo ./docs-backup/production-vm-backup-setup.sh
+   ```
+
+4. Copy the SSH key from your production VM to the backup VM (instructions will be shown when you run the production setup script)
+
+5. Update the backup script on the production VM with your backup VM's IP address:
+   ```
+   sudo nano /home/tutor/openedx-backup.sh
+   ```
+   Edit the `BACKUP_VM_IP` value.
+
+6. Download backups to your local computer when needed:
+   ```
+   ./docs-backup/local-backup-puller.sh your-backup-vm-ip
+   ```
+
+## Testing
+
+Test the backup system manually:
+```
+sudo -u tutor /home/tutor/openedx-backup.sh
+```
+
+## File Descriptions
+
+- `backup-vm-setup.sh`: Script to set up the backup VM
+- `production-vm-backup-setup.sh`: Script to configure backups on the production VM
+- `local-backup-puller.sh`: Script to download backups to your local computer
+- `recovery-guide.md`: Instructions for disaster recovery
+
+## Retention Policies
+
+- **Production VM**: 7 daily, 4 weekly, 3 monthly backups
+- **Backup VM**: 30 daily, 12 weekly, 12 monthly backups
+- **Local Computer**: Manual downloads as needed
+
+
+Filepath: ./LICENSE
+Content:
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright 2025 ThreeFold
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+
+Filepath: ./README.md
+Content:
+<h1> OpenedX Deployment on the ThreeFold Grid </h1>
+
+<h2>Table of Contents</h2>
+
+- [Introduction](#introduction)
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [ThreeFold Grid Deployment](#threefold-grid-deployment)
+- [Quick Start](#quick-start)
+- [Post-Installation](#post-installation)
+  - [DNS Configuration](#dns-configuration)
+- [Customization](#customization)
+- [Troubleshooting](#troubleshooting)
+- [Security Notes](#security-notes)
+- [License](#license)
+- [About ThreeFold](#about-threefold)
+- [About OpenedX](#about-openedx)
+
+---
+
+## Introduction
+
+This repository contains an automated deployment script for setting up an OpenedX learning platform on a ThreeFold grid node. The script automates the installation of Docker, Tutor (the official OpenedX deployment tool), and all necessary dependencies for running a production-ready OpenedX instance.
+
+## Features
+
+- **Fully Automated Setup**: Non-interactive deployment that can be run as part of VM initialization
+- **Security-Focused**: Creates a secure admin user, configures SSH key-based authentication, and sets up a firewall
+- **Persistent Storage**: Configures Docker to use dedicated storage on `/dev/vda` to ensure data survives reboots
+- **OpenedX with Tutor**: Installs Tutor, the official and recommended way to deploy OpenedX
+- **Indigo Theme**: Includes the Indigo theme for a modern learning experience
+- **Production-Ready**: Includes all necessary configurations for a production environment
+
+## Prerequisites
+
+- A ThreeFold Full VM with Ubuntu 24.04 and IPv4 network
+- At least 8GB RAM (16GB recommended for production)
+- At least 50GB storage
+- SSH access to the node with root privileges
+
+## ThreeFold Grid Deployment
+
+This deployment is specifically designed to run on a **Full Virtual Machine** on the ThreeFold Grid with:
+- IPv4 networking enabled
+- Public IPv4 address assigned to the VM
+- Additional disk with at least 50GB of storage
+- Ubuntu 24.04 LTS as the base operating system
+
+For instructions on deploying a Full VM on the ThreeFold Grid, refer to the [ThreeFold Manual](https://manual.grid.tf/).
+
+## Quick Start
+
+1. SSH into your ThreeFold grid node as root
+2. Download the deployment script and run it:
+   ```bash
+   wget https://raw.githubusercontent.com/mik-tf/openedx-tf/refs/heads/main/deploy.sh
+   bash deploy.sh
+   ```
+3. Follow the post-installation instructions displayed at the end of the script output
+
+## Post-Installation
+
+After successful deployment, you can log in as the `tutor` user via SSH and launch the platform:
+
+- Change user
+   ```
+   su - tutor
+   ```
+- Launch Tutor
+   ```
+   source ~/tutor-env/bin/activate
+   tutor local launch
+   ```
+- Update and install a theme
+   ```
+   tutor plugins update
+   tutor plugins install indigo
+   ```
+
+### DNS Configuration
+
+To properly access your OpenedX instance, you need to configure DNS records pointing to your VM's IPv4 address. 
+
+1. Set up an A record pointing your main domain (e.g., `learn.yourdomain.com`) to your VM's IPv4 address
+2. Set up a wildcard CNAME record (`*.learn.yourdomain.com`) pointing to your main domain
+
+For example, if your domain is `domain.com` and you want the school to be hosted at the subdomain `learn.yourdomain.com`, you would have the following:
+
+**Example DNS Configuration:**
+
+| Record Type | Host | Value | Comment |
+|-------------|-----------|--------------|---------|
+| A | learn | 192.168.1.100 | Replace with your VM's actual IPv4 address |
+| CNAME | *.learn | learn.yourdomain.com | Wildcard record for all subdomains |
+
+This configuration ensures that both the main LMS platform and subdomains for Studio (cms.learn.yourdomain.com) and other services work correctly. After configuring DNS, the platform will be accessible at `https://learn.yourdomain.com` and Studio at `https://cms.learn.yourdomain.com`.
+
+## Customization
+
+You can customize the deployment by editing the script variables at the top:
+
+- `NEW_USER`: The name of the admin user (default: `tutor`)
+- `USER_PASSWORD`: The password for the admin user (default: `tutorpassword`)
+
+## Troubleshooting
+
+If you encounter issues during deployment:
+
+- Check Docker status: `systemctl status docker`
+- Review Tutor logs: `tutor local logs`
+- Verify firewall configuration: `iptables -L -v`
+- Check Docker data directory location: `docker info | grep "Docker Root Dir"`
+- Verify IPv4 connectivity: `curl -4 ifconfig.co`
+
+## Security Notes
+
+- The script disables SSH password authentication by default, requiring key-based login
+- The created admin user has passwordless sudo access for ease of administration
+- A basic iptables firewall is configured to allow only necessary traffic
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## About ThreeFold
+
+ThreeFold is a peer-to-peer internet infrastructure that aims to create a more sustainable, private, and secure internet. Learn more at [threefold.io](https://threefold.io).
+
+## About OpenedX
+
+Open edX is the open-source platform that powers edX courses and is used by many organizations to host their own instances of the platform. Learn more at [open.edx.org](https://open.edx.org/).
+
+Filepath: ./deploy.sh
+Content:
+#!/bin/bash
+set -e  # Exit immediately if a command exits with a non-zero status
+
+# Deploy full VM with OpenedX using Tutor
+# Set an admin user with sudo access and secure SSH
+# Configure Docker with persistent storage
+# Fully non-interactive script
+
+echo "======== Starting OpenedX Deployment ========"
+
+# This must be run as root
+if [ "$(id -u)" -ne 0 ]; then
+    echo "This script must be run as root"
+    exit 1
+fi
+
+# Fix sudo permissions
+echo "Configuring sudo permissions"
+chown root:root /usr/bin/sudo
+chmod 4755 /usr/bin/sudo
+
+# Install prerequisites
+echo "Installing system prerequisites"
+export DEBIAN_FRONTEND=noninteractive
+apt update -y
+apt install -y python3 python3-pip libyaml-dev python3-venv sudo apt-transport-https \
+    ca-certificates curl software-properties-common openssh-server rsync iptables-persistent
+
+# Add Docker's official GPG key
+echo "Adding Docker repository"
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+# Add Docker repository
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+# Update again to include Docker repository and install Docker
+echo "Installing Docker"
+apt update -y
+apt install -y docker-ce docker-ce-cli containerd.io
+
+# Stop Docker service before configuring storage
+echo "Stopping Docker service for data directory configuration"
+systemctl stop docker || echo "Docker was not running, continuing..."
+
+# Backup existing Docker data if any
+if [ -d "/var/lib/docker" ] && [ -n "$(ls -A /var/lib/docker 2>/dev/null)" ]; then
+    echo "Backing up existing Docker data..."
+    mkdir -p /var/lib/docker-backup
+    tar -C /var/lib/docker -czf /var/lib/docker-backup/docker-data-$(date +%Y%m%d-%H%M%S).tar.gz .
+    echo "Backup created at /var/lib/docker-backup/"
+fi
+
+# Configure Docker storage on /dev/vda
+echo "Setting up Docker data directory on dedicated disk (/dev/vda)"
+
+# Find where /dev/vda is currently mounted (if at all)
+CURRENT_MOUNT=$(df -h | grep "/dev/vda" | awk '{print $6}' | head -1)
+
+if [ -n "$CURRENT_MOUNT" ]; then
+    echo "Device /dev/vda is currently mounted at $CURRENT_MOUNT"
+    
+    # Create Docker directory on the existing mount
+    mkdir -p "${CURRENT_MOUNT}/docker"
+    
+    # Migrate existing Docker data if any
+    if [ -d "/var/lib/docker" ] && [ -n "$(ls -A /var/lib/docker 2>/dev/null)" ]; then
+        echo "Migrating existing Docker data to ${CURRENT_MOUNT}/docker..."
+        rsync -a /var/lib/docker/ "${CURRENT_MOUNT}/docker/"
+    fi
+    
+    # Configure Docker to use this directory
+    mkdir -p /etc/docker
+    cat > /etc/docker/daemon.json << EOF
+{
+  "data-root": "${CURRENT_MOUNT}/docker",
+  "iptables": true
+}
+EOF
+    echo "Docker data will be stored at ${CURRENT_MOUNT}/docker"
+else
+    echo "Device /dev/vda is not currently mounted"
+    
+    # Check if /dev/vda exists
+    if [ -b "/dev/vda" ]; then
+        echo "Found /dev/vda device"
+        
+        # Create partition if needed
+        if ! fdisk -l "/dev/vda" | grep -q "Linux filesystem"; then
+            echo "Partitioning disk /dev/vda..."
+            (
+                echo g # Create a new empty GPT partition table
+                echo n # Add a new partition
+                echo   # Accept default partition number
+                echo   # Accept default first sector
+                echo   # Accept default last sector (use entire disk)
+                echo w # Write changes
+            ) | fdisk "/dev/vda" || { echo "Partitioning failed"; exit 1; }
+            
+            # Format the partition
+            echo "Formatting new partition..."
+            mkfs.ext4 "/dev/vda1" || { echo "Formatting failed"; exit 1; }
+        fi
+        
+        # Mount the proper partition
+        PARTITION=$(fdisk -l "/dev/vda" | grep "Linux filesystem" | head -1 | awk '{print $1}')
+        
+        if [ -n "$PARTITION" ]; then
+            echo "Found usable partition: $PARTITION"
+            
+            # Backup and migrate existing Docker data
+            TEMP_MOUNT=$(mktemp -d)
+            echo "Temporarily mounting $PARTITION to $TEMP_MOUNT"
+            mount "$PARTITION" "$TEMP_MOUNT" || { echo "Mount failed"; rmdir "$TEMP_MOUNT"; exit 1; }
+            
+            # Create Docker directory
+            mkdir -p "$TEMP_MOUNT/docker"
+            
+            # Migrate existing Docker data if any
+            if [ -d "/var/lib/docker" ] && [ -n "$(ls -A /var/lib/docker 2>/dev/null)" ]; then
+                echo "Migrating existing Docker data to $TEMP_MOUNT/docker..."
+                rsync -a /var/lib/docker/ "$TEMP_MOUNT/docker/"
+            fi
+            
+            # Unmount temporary location
+            umount "$TEMP_MOUNT"
+            rmdir "$TEMP_MOUNT"
+            
+            # Mount to the actual Docker data directory
+            echo "Mounting $PARTITION to /var/lib/docker"
+            mkdir -p /var/lib/docker
+            mount "$PARTITION" /var/lib/docker || { echo "Failed to mount to /var/lib/docker"; exit 1; }
+            
+            # Add to fstab for persistence
+            if ! grep -q "$PARTITION /var/lib/docker" /etc/fstab; then
+                echo "Adding entry to fstab for persistence"
+                echo "$PARTITION /var/lib/docker ext4 defaults 0 2" >> /etc/fstab
+            fi
+        else
+            echo "No usable partition found on /dev/vda"
+            echo "Continuing with default Docker data location"
+        fi
+    else
+        echo "Device /dev/vda not found"
+        echo "Continuing with default Docker data location"
+    fi
+fi
+
+# Start Docker with new settings
+echo "Starting Docker with new configuration"
+systemctl daemon-reload
+systemctl enable docker
+systemctl start docker
+
+# Verify Docker is working
+echo "Verifying Docker is working properly..."
+if ! docker info >/dev/null 2>&1; then
+    echo "❌ Docker failed to start properly with the new configuration"
+    echo "Rolling back changes..."
+    
+    if ls /var/lib/docker-backup/docker-data-* >/dev/null 2>&1; then
+        # Restore from backup
+        BACKUP_FILE=$(ls -t /var/lib/docker-backup/docker-data-* | head -1)
+        echo "Restoring from backup: $BACKUP_FILE"
+        rm -rf /var/lib/docker/* 2>/dev/null || true
+        tar -xzf "$BACKUP_FILE" -C /var/lib/docker
+        rm -f /etc/docker/daemon.json
+        systemctl start docker
+        
+        if ! docker info >/dev/null 2>&1; then
+            echo "Docker still not working after rollback. Manual intervention required."
+            exit 1
+        fi
+    else
+        echo "No backup found, cannot rollback. Manual intervention required."
+        exit 1
+    fi
+else
+    echo "✅ Docker is running successfully with the new data directory"
+fi
+
+# Create new admin user
+NEW_USER="tutor"
+USER_PASSWORD="tutorpassword"
+echo "Creating new admin user: $NEW_USER with password: $USER_PASSWORD"
+useradd -m -s /bin/bash "$NEW_USER" || echo "User $NEW_USER already exists"
+
+# Set password non-interactively
+echo "$NEW_USER:$USER_PASSWORD" | chpasswd
+
+# Add to sudo and docker groups
+usermod -aG sudo "$NEW_USER"
+usermod -aG docker "$NEW_USER"
+
+# Configure passwordless sudo for the new user
+echo "$NEW_USER ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/$NEW_USER
+chmod 440 /etc/sudoers.d/$NEW_USER
+
+# Create SSH directory for the new user
+mkdir -p /home/$NEW_USER/.ssh
+chmod 700 /home/$NEW_USER/.ssh
+touch /home/$NEW_USER/.ssh/authorized_keys
+chmod 600 /home/$NEW_USER/.ssh/authorized_keys
+chown -R $NEW_USER:$NEW_USER /home/$NEW_USER/.ssh
+
+# Secure SSH server - disable password authentication
+echo "Configuring SSH for key-based authentication only"
+sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+# In case the line is not commented out already
+sed -i 's/^PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+# Make sure it's in the config even if it wasn't there
+if ! grep -q "^PasswordAuthentication no" /etc/ssh/sshd_config; then
+    echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
+fi
+
+# Restart SSH service to apply changes (using correct service name)
+echo "Restarting SSH service"
+if systemctl is-active --quiet ssh.service; then
+    systemctl restart ssh.service
+elif systemctl is-active --quiet sshd.service; then
+    systemctl restart sshd.service
+else
+    echo "Warning: Could not identify SSH service name. Manual restart may be required."
+    # Try both common service names
+    systemctl restart ssh.service 2>/dev/null || true
+    systemctl restart sshd.service 2>/dev/null || true
+fi
+
+# Set up Tutor for the new user
+echo "Setting up Tutor for user $NEW_USER"
+mkdir -p /home/$NEW_USER/tutor-env
+python3 -m venv /home/$NEW_USER/tutor-env
+/home/$NEW_USER/tutor-env/bin/pip install --upgrade pip
+/home/$NEW_USER/tutor-env/bin/pip install "tutor[full]"
+
+# Add tutor to PATH in user's .bashrc
+echo 'export PATH="$HOME/tutor-env/bin:$PATH"' >> /home/$NEW_USER/.bashrc
+
+# Create directories for Tutor data
+mkdir -p /home/$NEW_USER/.local/share/tutor
+chown -R $NEW_USER:$NEW_USER /home/$NEW_USER/.local
+
+# Fix permissions
+chown -R $NEW_USER:$NEW_USER /home/$NEW_USER/tutor-env
+
+# Simple security configuration that works with Docker
+echo "Setting up basic security rules..."
+
+# Make sure Docker is running (to ensure its chains are created)
+systemctl start docker
+
+# Wait a moment for Docker to set up its chains
+sleep 5
+
+# Now add our rules in a way that doesn't interfere with Docker's chains
+iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+iptables -A INPUT -i lo -j ACCEPT
+
+# Set default policy after allowing necessary traffic
+iptables -P INPUT DROP
+
+# Save iptables rules for persistence
+echo "Saving iptables rules for persistence..."
+mkdir -p /etc/iptables
+iptables-save > /etc/iptables/rules.v4
+ip6tables-save > /etc/iptables/rules.v6
+
+echo "========================================================"
+echo "IMPORTANT: SSH has been configured for key-based auth only!"
+echo "Password authentication is now disabled for SSH."
+echo ""
+echo "YOU MUST ADD YOUR SSH PUBLIC KEY TO:"
+echo "/home/$NEW_USER/.ssh/authorized_keys"
+echo ""
+echo "You can do this with:"
+echo "echo 'YOUR_SSH_PUBLIC_KEY' >> /home/$NEW_USER/.ssh/authorized_keys"
+echo "========================================================"
+echo ""
+echo "Installation complete!"
+echo "Log in as $NEW_USER with your SSH key"
+echo "User has been configured with passwordless sudo access"
+echo ""
+echo "To start using Tutor and set up Open edX, follow these steps:"
+echo ""
+echo "1. Switch to the tutor user, activate the virtual environment:"
+echo "   and launch the platform"
+echo "   su - tutor"
+echo "   source ~/tutor-env/bin/activate"
+echo "   tutor local launch"
+echo ""
+echo "2. Update tutor and set a theme"
+echo "   tutor plugins update"
+echo "   tutor plugins install indigo"
+echo ""
+echo "3. After installation, you can manage your Open edX platform with:"
+echo "   tutor local start    # Start all services"
+echo "   tutor local stop     # Stop all services"
+echo "   tutor local status   # Check status of services"
+echo ""
+echo "4. To access your Open edX installation:"
+echo "   Check the LMS host with: tutor config printvalue LMS_HOST"
+echo "   Add this name to your DNS A record pointing to this server's IP address."
+echo ""
+echo "5. Docker data is configured to use persistent storage on /dev/vda"
+echo "   This ensures your container data will survive reboots"
+echo ""
+echo "6. Basic firewall rules have been set up to allow SSH, HTTP, and HTTPS traffic"
+echo "   while blocking other incoming connections."
+
+# Success
+echo "======== Deployment Completed Successfully ========"
+
