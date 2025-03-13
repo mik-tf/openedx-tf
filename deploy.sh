@@ -245,31 +245,20 @@ chown -R $NEW_USER:$NEW_USER /home/$NEW_USER/tutor-env
 # Simple security configuration that works with Docker
 echo "Setting up basic security rules..."
 
-# Flush any existing firewall rules
-iptables -F
-iptables -t nat -F
-iptables -X
+# Make sure Docker is running (to ensure its chains are created)
+systemctl start docker
 
-# Default policies - INPUT is initially set to ACCEPT so we don't lock ourselves out
-iptables -P INPUT ACCEPT
-iptables -P FORWARD ACCEPT
-iptables -P OUTPUT ACCEPT
+# Wait a moment for Docker to set up its chains
+sleep 5
 
-# Allow established connections
+# Now add our rules in a way that doesn't interfere with Docker's chains
 iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-
-# Allow SSH (port 22)
 iptables -A INPUT -p tcp --dport 22 -j ACCEPT
-
-# Allow HTTP(S) (ports 80/443)
 iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 iptables -A INPUT -p tcp --dport 443 -j ACCEPT
-
-# Allow loopback
 iptables -A INPUT -i lo -j ACCEPT
 
-# Optional: After all your allow rules, set the default policy to drop all other incoming traffic
-# This provides basic security without interfering with Docker
+# Set default policy after allowing necessary traffic
 iptables -P INPUT DROP
 
 # Save iptables rules for persistence
@@ -299,7 +288,7 @@ echo "1. Switch to the tutor user, activate the virtual environment:"
 echo "   and launch the platform"
 echo "   su - tutor"
 echo "   source ~/tutor-env/bin/activate"
-echo "   tutor local quickstart"
+echo "   tutor local launch"
 echo ""
 echo "2. Update tutor and set a theme"
 echo "   tutor plugins update"
