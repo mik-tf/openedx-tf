@@ -51,17 +51,12 @@ For instructions on deploying a Full VM on the ThreeFold Grid, refer to the [Thr
 ## Quick Start
 
 1. SSH into your ThreeFold grid node as root
-2. Download the deployment script:
+2. Download the deployment script and run it:
    ```bash
    wget https://raw.githubusercontent.com/mik-tf/openedx-tf/refs/heads/main/deploy.sh
-   ```
-
-3. Run the script:
-   ```bash
    bash deploy.sh
    ```
-
-4. Follow the post-installation instructions displayed at the end of the script output
+3. Follow the post-installation instructions displayed at the end of the script output
 
 ## Post-Installation
 
