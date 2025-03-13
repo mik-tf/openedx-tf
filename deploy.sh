@@ -310,7 +310,7 @@ iptables -A FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACC
 # Setup proper DOCKER-USER chain handling
 iptables -t nat -A PREROUTING -m addrtype --dst-type LOCAL -j DOCKER
 iptables -t nat -A DOCKER-ISOLATION-STAGE-1 -i docker0 ! -o docker0 -j DOCKER-ISOLATION-STAGE-2
-iptables -t nat -A DOCKER-ISOLATION-STAGE-2 -o docker0 -j DROP
+iptables -t nat -A DOCKER-ISOLATION-STAGE-2 -o docker0 -j RETURN
 iptables -t nat -A POSTROUTING -s $DOCKER_SUBNET ! -o docker0 -j MASQUERADE
 iptables -t nat -A DOCKER-USER -j RETURN
 
