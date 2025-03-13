@@ -79,17 +79,19 @@ After successful deployment, you can log in as the `tutor` user via SSH and laun
 
 ### DNS Configuration
 
-To properly access your OpenedX instance, you need to configure DNS records pointing to your VM's IPv4 address:
+To properly access your OpenedX instance, you need to configure DNS records pointing to your VM's IPv4 address. 
 
 1. Set up an A record pointing your main domain (e.g., `learn.yourdomain.com`) to your VM's IPv4 address
 2. Set up a wildcard CNAME record (`*.learn.yourdomain.com`) pointing to your main domain
 
+For example, if your domain is `domain.com` and you want the school to be hosted at the subdomain `learn.yourdomain.com`, you would have the following:
+
 **Example DNS Configuration:**
 
-| Record Type | Host/Name | Value/Target | Comment |
+| Record Type | Host | Value | Comment |
 |-------------|-----------|--------------|---------|
-| A | learn.yourdomain.com | 192.168.1.100 | Replace with your VM's actual IPv4 address |
-| CNAME | *.learn.yourdomain.com | learn.yourdomain.com | Wildcard record for all subdomains |
+| A | learn | 192.168.1.100 | Replace with your VM's actual IPv4 address |
+| CNAME | *.learn | learn.yourdomain.com | Wildcard record for all subdomains |
 
 This configuration ensures that both the main LMS platform and subdomains for Studio (cms.learn.yourdomain.com) and other services work correctly. After configuring DNS, the platform will be accessible at `https://learn.yourdomain.com` and Studio at `https://cms.learn.yourdomain.com`.
 
