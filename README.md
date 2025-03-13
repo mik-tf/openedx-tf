@@ -62,13 +62,20 @@ For instructions on deploying a Full VM on the ThreeFold Grid, refer to the [Thr
 
 After successful deployment, you can log in as the `tutor` user via SSH and launch the platform:
 
-```
-su - tutor
-source ~/tutor-env/bin/activate
-tutor plugins update
-tutor plugins install indigo
-tutor local launch
-```
+- Change user
+   ```
+   su - tutor
+   ```
+- Launch Tutor
+   ```
+   source ~/tutor-env/bin/activate
+   tutor local launch
+   ```
+- Update and install a theme
+   ```
+   tutor plugins update
+   tutor plugins install indigo
+   ```
 
 ### DNS Configuration
 
