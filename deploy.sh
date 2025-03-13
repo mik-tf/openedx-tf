@@ -72,7 +72,8 @@ if [ -n "$CURRENT_MOUNT" ]; then
     mkdir -p /etc/docker
     cat > /etc/docker/daemon.json << EOF
 {
-  "data-root": "${CURRENT_MOUNT}/docker"
+  "data-root": "${CURRENT_MOUNT}/docker",
+  "iptables": true
 }
 EOF
     echo "Docker data will be stored at ${CURRENT_MOUNT}/docker"
@@ -241,78 +242,35 @@ chown -R $NEW_USER:$NEW_USER /home/$NEW_USER/.local
 # Fix permissions
 chown -R $NEW_USER:$NEW_USER /home/$NEW_USER/tutor-env
 
-# Set up iptables firewall
-echo "Setting up iptables firewall rules..."
+# Simple security configuration that works with Docker
+echo "Setting up basic security rules..."
 
-# Create a backup of current iptables rules
-mkdir -p /root/iptables-backup
-iptables-save > /root/iptables-backup/rules-$(date +%Y%m%d-%H%M%S).v4
-ip6tables-save > /root/iptables-backup/rules-$(date +%Y%m%d-%H%M%S).v6
-
-# Flush existing rules and set default policies
-echo "Flushing existing iptables rules..."
+# Flush any existing firewall rules
 iptables -F
-iptables -X
 iptables -t nat -F
-iptables -t nat -X
-iptables -t mangle -F
-iptables -t mangle -X
+iptables -X
 
-# Create Docker-specific chains that Docker expects
-echo "Creating Docker-specific chains..."
-iptables -N DOCKER 2>/dev/null || true
-iptables -t nat -N DOCKER 2>/dev/null || true
-iptables -t nat -N DOCKER-USER 2>/dev/null || true
-iptables -t nat -N DOCKER-ISOLATION-STAGE-1 2>/dev/null || true
-iptables -t nat -N DOCKER-ISOLATION-STAGE-2 2>/dev/null || true
-
-# Set default policies (no incoming, allow outgoing)
-iptables -P INPUT DROP
-iptables -P FORWARD DROP
+# Default policies - INPUT is initially set to ACCEPT so we don't lock ourselves out
+iptables -P INPUT ACCEPT
+iptables -P FORWARD ACCEPT
 iptables -P OUTPUT ACCEPT
 
-# Allow loopback interface
-iptables -A INPUT -i lo -j ACCEPT
-iptables -A OUTPUT -o lo -j ACCEPT
-
-# Allow established and related connections
+# Allow established connections
 iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 
-# Allow SSH
+# Allow SSH (port 22)
 iptables -A INPUT -p tcp --dport 22 -j ACCEPT
 
-# Allow HTTP and HTTPS
+# Allow HTTP(S) (ports 80/443)
 iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 iptables -A INPUT -p tcp --dport 443 -j ACCEPT
-iptables -A INPUT -p udp --dport 443 -j ACCEPT
 
-# Dynamically detect Docker subnet
-echo "Detecting Docker network configuration..."
-DOCKER_SUBNET=$(docker network inspect bridge | grep -oP '(?<="Subnet": ")[^"]*')
-if [ -z "$DOCKER_SUBNET" ]; then
-  echo "Warning: Could not automatically detect Docker subnet. Using default 172.17.0.0/16"
-  DOCKER_SUBNET="172.17.0.0/16"
-fi
-echo "Using Docker subnet: $DOCKER_SUBNET"
+# Allow loopback
+iptables -A INPUT -i lo -j ACCEPT
 
-# Docker-specific rules using detected subnet
-iptables -A INPUT -s $DOCKER_SUBNET -j ACCEPT
-iptables -A FORWARD -s $DOCKER_SUBNET -j ACCEPT
-iptables -A FORWARD -d $DOCKER_SUBNET -j ACCEPT
-
-# Allow Docker internal communication
-iptables -A FORWARD -i docker0 -o docker0 -j ACCEPT
-
-# Set up Docker's forwarding rules - these are critical
-iptables -A FORWARD -i docker0 ! -o docker0 -j ACCEPT
-iptables -A FORWARD -o docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-
-# Setup proper DOCKER-USER chain handling
-iptables -t nat -A PREROUTING -m addrtype --dst-type LOCAL -j DOCKER
-iptables -t nat -A DOCKER-ISOLATION-STAGE-1 -i docker0 ! -o docker0 -j DOCKER-ISOLATION-STAGE-2
-iptables -t nat -A DOCKER-ISOLATION-STAGE-2 -o docker0 -j RETURN
-iptables -t nat -A POSTROUTING -s $DOCKER_SUBNET ! -o docker0 -j MASQUERADE
-iptables -t nat -A DOCKER-USER -j RETURN
+# Optional: After all your allow rules, set the default policy to drop all other incoming traffic
+# This provides basic security without interfering with Docker
+iptables -P INPUT DROP
 
 # Save iptables rules for persistence
 echo "Saving iptables rules for persistence..."
@@ -341,7 +299,7 @@ echo "1. Switch to the tutor user, activate the virtual environment:"
 echo "   and launch the platform"
 echo "   su - tutor"
 echo "   source ~/tutor-env/bin/activate"
-echo "   tutor local launch"
+echo "   tutor local quickstart"
 echo ""
 echo "2. Update tutor and set a theme"
 echo "   tutor plugins update"
@@ -359,9 +317,8 @@ echo ""
 echo "5. Docker data is configured to use persistent storage on /dev/vda"
 echo "   This ensures your container data will survive reboots"
 echo ""
-echo "6. iptables firewall has been configured to allow SSH, HTTP, HTTPS traffic"
-echo "   and properly handle Docker container networking."
-echo "   Docker subnet ($DOCKER_SUBNET) has been automatically detected and configured."
+echo "6. Basic firewall rules have been set up to allow SSH, HTTP, and HTTPS traffic"
+echo "   while blocking other incoming connections."
 
 # Success
 echo "======== Deployment Completed Successfully ========"
