@@ -85,7 +85,7 @@ After successful deployment, you can log in as the `tutor` user via SSH and laun
 
 ### DNS Configuration
 
-To properly access your OpenedX instance, you need to configure DNS records pointing to your VM's IPv4 address. 
+To properly access your OpenedX instance, you need to configure DNS records pointing to your VM's IPv4 address.
 
 1. Set up an A record pointing your main domain (e.g., `learn.yourdomain.com`) to your VM's IPv4 address
 2. Set up a wildcard CNAME record (`*.learn.yourdomain.com`) pointing to your main domain
@@ -117,13 +117,13 @@ To set up the backup system:
 
 1. Deploy a second VM to serve as your backup server:
    ```bash
-   scp docs-backup/backup-vm-setup.sh root@<backup-vm-ip>:~/
+   scp scripts/backup/backup-vm-setup.sh root@<backup-vm-ip>:~/
    ssh root@<backup-vm-ip> "chmod +x ~/backup-vm-setup.sh && ./backup-vm-setup.sh"
    ```
 
 2. Configure backup on your production VM:
    ```bash
-   sudo ./docs-backup/production-vm-backup-setup.sh
+   sudo ./scripts/backup/production-vm-backup-setup.sh
    ```
 
 3. Follow the displayed instructions to complete the setup:
@@ -131,7 +131,7 @@ To set up the backup system:
    - Update the backup script with your backup VM's IP
    - Test the backup system
 
-For detailed instructions, refer to the [backup documentation](docs-backup/README.md).
+For detailed instructions, refer to the [backup documentation](docs/backup/README.md).
 
 ### Disaster Recovery
 
@@ -139,7 +139,7 @@ If you need to recover your OpenedX installation:
 
 1. Deploy a new VM using the main deployment script
 2. Obtain the latest backup (from backup VM or local copy)
-3. Follow the step-by-step instructions in the [recovery guide](docs-backup/recovery-guide.md)
+3. Follow the step-by-step instructions in the [recovery guide](docs/backup/recovery-guide.md)
 
 The recovery process is designed to minimize downtime and ensure complete restoration of your OpenedX environment.
 

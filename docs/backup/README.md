@@ -23,7 +23,7 @@ First, set up a dedicated VM to store your backups:
 1. Deploy a new VM with Ubuntu that will serve as your backup server
 2. Copy the backup VM setup script to the server:
    ```bash
-   scp docs-backup/backup-vm-setup.sh root@<backup-vm-ip>:~/
+   scp scripts/backup/backup-vm-setup.sh root@<backup-vm-ip>:~/
    ```
 3. SSH into the backup VM and run the setup script:
    ```bash
@@ -40,7 +40,7 @@ Next, set up the backup system on your production OpenedX VM:
 1. Make sure your OpenedX instance is already deployed and working properly
 2. Run the production VM backup setup script:
    ```bash
-   sudo ./docs-backup/production-vm-backup-setup.sh
+   sudo ./scripts/backup/production-vm-backup-setup.sh
    ```
 3. **IMPORTANT**: The script will generate an SSH key and display it. Copy this key.
 4. On your backup VM, add the SSH key to the authorized keys:
@@ -79,7 +79,7 @@ To download backups to your local machine:
 1. Copy the local backup puller script to your local computer
 2. Run the script with your backup VM's IP:
    ```bash
-   ./docs-backup/local-backup-puller.sh <backup-vm-ip>
+   ./scripts/backup/local-backup-puller.sh <backup-vm-ip>
    ```
 3. Enter the password for the backup user when prompted
 4. Verify the backups were downloaded:

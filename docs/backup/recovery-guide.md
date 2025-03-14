@@ -146,7 +146,7 @@ Finally, set up the backup system on your new VM:
 
 ```bash
 # As root user on new VM
-sudo ./docs-backup/production-vm-backup-setup.sh
+sudo ./scripts/backup/production-vm-backup-setup.sh
 ```
 
 Follow the instructions displayed after running the script to:

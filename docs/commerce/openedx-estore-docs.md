@@ -91,7 +91,7 @@ After the base system is deployed, configure the backup system:
 1. Set up a separate VM for backup storage:
    ```bash
    # Copy the backup VM setup script
-   scp docs-backup/backup-vm-setup.sh root@<backup-vm-ip>:~/
+   scp scripts/backup/backup-vm-setup.sh root@<backup-vm-ip>:~/
 
    # SSH into the backup VM and run the script
    ssh root@<backup-vm-ip>
@@ -102,7 +102,7 @@ After the base system is deployed, configure the backup system:
 2. Configure your production VM to perform backups:
    ```bash
    # On your production VM
-   sudo ./docs-backup/production-vm-backup-setup.sh
+   sudo ./scripts/backup/production-vm-backup-setup.sh
    ```
 
 3. Copy the generated SSH key to your backup VM:
