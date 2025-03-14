@@ -40,7 +40,8 @@ This repository contains an automated deployment script for setting up an Opened
 
 - A ThreeFold Full VM with Ubuntu 24.04 and IPv4 network
 - At least 8GB RAM (16GB recommended for production)
-- At least 50GB storage
+- At least 2vcores
+- At least 50GB storage as an additional disk
 - SSH access to the node with root privileges
 - For backups: A second VM to serve as backup storage
 
@@ -72,9 +73,22 @@ After successful deployment, you can log in as the `tutor` user via SSH and laun
    ```
    su - tutor
    ```
-- Launch Tutor
+- Activate the Python virtual environment
    ```
    source ~/tutor-env/bin/activate
+   ```
+- Set environment with proper values
+   ```
+   tutor config save \
+   --set LMS_HOST=domain.com \
+   --set CMS_HOST=studio.domain.com \
+   --set PLATFORM_NAME="PLATFORM NAME" \
+   --set CONTACT_EMAIL=example@email.com \
+   --set LANGUAGE_CODE=en \
+   --set ENABLE_HTTPS=true
+   ```
+- Launch Tutor
+   ```
    tutor local launch
    ```
 - Update and install a theme
