@@ -9,8 +9,7 @@
 - [Quick Start](#quick-start)
 - [Post-Installation](#post-installation)
   - [DNS Configuration](#dns-configuration)
-- [Uodate, Backup and Recovery](#uodate-backup-and-recovery)
-  - [Updating Tutor](#updating-tutor)
+- [Backup and Recovery](#backup-and-recovery)
   - [Setting Up Backups](#setting-up-backups)
   - [Disaster Recovery](#disaster-recovery)
 - [Customization](#customization)
@@ -81,6 +80,10 @@ After successful deployment, you can log in as the `tutor` user via SSH and laun
    ```
    su - tutor
    ```
+- Activate the Python virtual environment
+   ```
+   source ~/tutor-env/bin/activate
+   ```
 - Set environment with proper values
   - If you selected IPv4 for the ThreeFold VM network, set `ENABLE_HTTPS=true`
   - If you did not select IPv4 for the ThreeFold VM network, set `ENABLE_HTTPS=false`
@@ -126,27 +129,9 @@ There are two options here, with IPv4 or without IPv4.
 
 This configuration ensures that both the main LMS platform and subdomains for Studio (cms.learn.yourdomain.com) and other services work correctly. After configuring DNS, the platform will be accessible at `https://learn.yourdomain.com` and Studio at `https://cms.learn.yourdomain.com`.
 
-## Uodate, Backup and Recovery
+## Backup and Recovery
 
 This repository includes a comprehensive backup and disaster recovery system for your OpenedX installation.
-
-### Updating Tutor
-
-To update Tutor to the latest version:
-
-```bash
-# Stop all running services
-tutor local stop
-
-# Update Tutor to the latest version
-pipx upgrade tutor
-
-# Update all plugins
-tutor plugins update
-
-# Start services again
-tutor local start
-```
 
 ### Setting Up Backups
 
