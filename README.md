@@ -9,7 +9,8 @@
 - [Quick Start](#quick-start)
 - [Post-Installation](#post-installation)
   - [DNS Configuration](#dns-configuration)
-- [Backup and Recovery](#backup-and-recovery)
+- [Uodate, Backup and Recovery](#uodate-backup-and-recovery)
+  - [Updating Tutor](#updating-tutor)
   - [Setting Up Backups](#setting-up-backups)
   - [Disaster Recovery](#disaster-recovery)
 - [Customization](#customization)
@@ -38,7 +39,14 @@ This repository contains an automated deployment script for setting up an Opened
 
 ## Prerequisites
 
-- A ThreeFold Full VM with Ubuntu 24.04 and IPv4 network
+- A ThreeFold Full VM with Ubuntu 24.04
+  - With IPv4 as Network
+    - Set your custom domain
+    - Set the A record to the IP of the Vm hosting your workload
+  - Without IPv4 as Network
+    - Set a web gateway with a custom domain
+    - Set TLS passthrough to false
+    - Set the A record to the IP of the web gateway node
 - At least 8GB RAM (16GB recommended for production)
 - At least 2vcores
 - At least 50GB storage as an additional disk
@@ -73,11 +81,9 @@ After successful deployment, you can log in as the `tutor` user via SSH and laun
    ```
    su - tutor
    ```
-- Activate the Python virtual environment
-   ```
-   source ~/tutor-env/bin/activate
-   ```
 - Set environment with proper values
+  - If you selected IPv4 for the ThreeFold VM network, set `ENABLE_HTTPS=true`
+  - If you did not select IPv4 for the ThreeFold VM network, set `ENABLE_HTTPS=false`
    ```
    tutor config save \
    --set LMS_HOST=domain.com \
@@ -108,6 +114,11 @@ For example, if your domain is `domain.com` and you want the school to be hosted
 
 **Example DNS Configuration:**
 
+There are two options here, with IPv4 or without IPv4.
+
+- If you set network to IPv4, the Value of the A record should be the IP of the VM hosting the workload
+- If you did not set network to IPv4, the Value of the A record should be the IP of the web gateway node
+
 | Record Type | Host | Value | Comment |
 |-------------|-----------|--------------|---------|
 | A | learn | 192.168.1.100 | Replace with your VM's actual IPv4 address |
@@ -115,9 +126,27 @@ For example, if your domain is `domain.com` and you want the school to be hosted
 
 This configuration ensures that both the main LMS platform and subdomains for Studio (cms.learn.yourdomain.com) and other services work correctly. After configuring DNS, the platform will be accessible at `https://learn.yourdomain.com` and Studio at `https://cms.learn.yourdomain.com`.
 
-## Backup and Recovery
+## Uodate, Backup and Recovery
 
 This repository includes a comprehensive backup and disaster recovery system for your OpenedX installation.
+
+### Updating Tutor
+
+To update Tutor to the latest version:
+
+```bash
+# Stop all running services
+tutor local stop
+
+# Update Tutor to the latest version
+pipx upgrade tutor
+
+# Update all plugins
+tutor plugins update
+
+# Start services again
+tutor local start
+```
 
 ### Setting Up Backups
 
